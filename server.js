@@ -9,91 +9,88 @@ const notion = new Client({ auth: process.env.NOTION_KEY });
 
 const db_id = process.env.NOTION_DB_ID;
 let lastChecked = new Date().toISOString();
-
 async function checkNewEntries() {
-    try {
         const response = await notion.databases.query({
             database_id: db_id,
-            filter: {property: "Added", date: {after: lastChecked}}
+            "filter": {property: "Added", date: {on_or_after: lastChecked }}
         })
 
         const newEntry = response.results
 
-        newEntry.forEach((entry) => {
-            //console.log(`New Entry ID: ${entry.id}`);
-            //console.log(entry.properties.Name.title)
+        if(newEntry.length > 0) {
+           newEntry.forEach((entry) => {
             triggerIntegration(entry);
-        });
-
+        }); 
         lastChecked = new Date().toISOString()
-    } catch (error) {
-        console.log("Error message:", error)
-    }
+        console.log("Next update interval:" + lastChecked)
+        } else {
+            console.log('Nothing to update')
+        }
 }
 
-// Function to trigger integration (Modify this for your needs)
+
 async function triggerIntegration(entry) {
     console.log(`🚀 Triggering integration for: ${entry.id}`);
-    getSteamGame(entry.propperties.Name.title)
-    try {
-        const response = await notion.pages.update({
-            page_id: entry.id,
-            properties: {
-                "Link": {"url": "https://store.steampowered.com/app/3042190/Nomad_Idle/"},
-                "Release Date ": {
+
+   
+        const steamID = entry.properties.Name.title[0].plain_text  
+        const stringSteamID = String(steamID)
+        await axios.get(`http://store.steampowered.com/api/appdetails/?appids=${steamID}`, {
+            params: {
+                appids: steamID
+            }
+        }).then( async res => {
+           const gameDetail = res.data[stringSteamID].data
+
+           await notion.pages.update({
+                page_id: entry.id,
+                properties: {
+                    "Link": {"url": `https://store.steampowered.com/app/${gameDetail.steam_appid}`},
+                    "Release Date ": {
                     "type": "date",
-                    "date": {"start": "2025-02-28","end": null,"time_zone": null}
-                },
-                "Co-op": {"checkbox": false},
-                "Name": {
+                    "date": {"start": `${convertDate(gameDetail.release_date.date)}`,"end": null,"time_zone": null}
+                    },
+                    "Co-op": {"checkbox": false},
+                    "Name": {
                     "type": "title",
                     "title": [
-                        {
-                            "type": "text",
-                            "text": {
-                                "content": "Nomad Idle"
-                            }
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": `${gameDetail.name}`
                         }
+                    }
                     ]
+                    }
                 }
-            }
+            })
+
+            // await notion.blocks.children.append({
+            //     block_id: entry.id,
+
+            // })
         })
-    } catch (error) {
-        console.log("Error message:", error)
-    }
+        console.log('Entry updated successfully!')
+    
+        
+    
+    //console.log(entry.properties.Name.title[0].plain_text)
+       
 }
 
-async function getSteamGame(appID) {
 
-    const parseInt = appID.parseInt()
-    try {
-        const response = await axios.get('http://store.steampowered.com/api/appdetails/', {
-            params: {
-                appids: parseInt
-            }
-        });
+function convertDate(date) {
+    let dateObject = new Date(date)
 
-        // Check if the API response contains the expected data
-        if (response.data[0].success) {
-            console.log(response.data[0].data); // Game details
-        } else {
-            console.log("Failed to fetch app details.");
-        }
-    } catch (error) {
-        console.error("Error fetching Steam app details:", error);
-    }
+    return dateObject.toISOString().split("T")[0]
 }
-// Express Route to Manually Trigger Check
-app.get("/check-notion", async (req, res) => {
-    await checkNewEntries();
-    res.send("Checked for new Notion entries!");
-});
 
 // Start polling every 30 seconds
-setInterval(checkNewEntries, 10 * 1000);
+setInterval(checkNewEntries, 15 * 1000);
 
 // Start Express server
 app.listen(3000, () => {
     console.log(`✅ Server running on http://localhost:3000`);
     console.log("📡 Watching for new Notion database entries...");
+    console.log("Currently checking for entries after" + lastChecked)
 });
